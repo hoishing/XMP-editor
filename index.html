@@ -4,12 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>XMP Description Editor</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <script>
       (function () {
         var saved = localStorage.getItem("theme");
-        if (saved === "cupcake" || saved === "dim") {
-          document.documentElement.setAttribute("data-theme", saved);
-        }
+        document.documentElement.setAttribute(
+          "data-theme",
+          saved === "cupcake" ? "cupcake" : "dim"
+        );
       })();
     </script>
   </head>

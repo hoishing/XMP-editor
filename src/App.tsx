@@ -1,15 +1,15 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { FileSelector } from "@/components/FileSelector";
 import { ImageList } from "@/components/ImageList";
 import { FolderTree } from "@/components/FolderTree";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useTheme } from "@/hooks/useTheme";
-import { scanDirectory, findFolderById } from "@/lib/folder";
+import { scanDirectory, findFolderById, collectAllImageHandles } from "@/lib/folder";
 import * as jpegModule from "@/lib/jpeg";
 import * as pngModule from "@/lib/png";
 import * as webpModule from "@/lib/webp";
 import { extractDescription, buildXmpXml } from "@/lib/xmp";
-import type { ImageFormat, ImageFile, FolderNode, SourceMode } from "@/types";
+import type { ImageFormat, ImageFile, SourceMode } from "@/types";
 
 function detectFormat(name: string): ImageFormat | null {
   const lower = name.toLowerCase();
@@ -70,6 +70,8 @@ function revokeImageUrls(images: ImageFile[]) {
 function App() {
   const { preference, setTheme } = useTheme();
   const [source, setSource] = useState<SourceMode>({ kind: "none" });
+  const sourceRef = useRef(source);
+  sourceRef.current = source;
   const [loading, setLoading] = useState(false);
   const [folderImagesLoading, setFolderImagesLoading] = useState(false);
 
@@ -155,11 +157,14 @@ function App() {
 
       const root = await scanDirectory(dirHandle);
 
+      const allHandles = collectAllImageHandles(root);
+      const images = await loadImagesFromHandles(allHandles);
+
       setSource({
         kind: "folder",
         root,
-        selectedFolderId: null,
-        images: [],
+        selectedFolderId: root.id,
+        images,
       });
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
@@ -170,22 +175,23 @@ function App() {
   }, [isSupported]);
 
   const handleSelectTreeFolder = useCallback(async (folderId: string) => {
-    let folderNode: FolderNode | null = null;
+    const current = sourceRef.current;
+    if (current.kind !== "folder") return;
+
+    const folderNode = findFolderById(current.root, folderId);
+    if (!folderNode) return;
 
     setSource((prev) => {
       if (prev.kind !== "folder") return prev;
       revokeImageUrls(prev.images);
-      folderNode = findFolderById(prev.root, folderId);
       return { ...prev, selectedFolderId: folderId, images: [] };
     });
-
-    if (!folderNode) return;
 
     setFolderImagesLoading(true);
 
     try {
       const newImages = await loadImagesFromHandles(
-        (folderNode as FolderNode).imageHandles
+        collectAllImageHandles(folderNode)
       );
 
       setSource((prev) => {
@@ -211,15 +217,12 @@ function App() {
       );
 
       try {
-        let imageFile: ImageFile | undefined;
-        setSource((prev) => {
-          const images =
-            prev.kind === "files" || prev.kind === "folder"
-              ? prev.images
-              : [];
-          imageFile = images.find((img) => img.id === id);
-          return prev;
-        });
+        const currentSource = sourceRef.current;
+        const images =
+          currentSource.kind === "files" || currentSource.kind === "folder"
+            ? currentSource.images
+            : [];
+        const imageFile = images.find((img) => img.id === id);
 
         if (!imageFile) throw new Error("Image not found");
 
@@ -298,12 +301,15 @@ function App() {
   return (
     <div className="min-h-screen bg-base-100">
       <header className="border-b border-base-300">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-bold">XMP Description Editor</h1>
-            <p className="text-sm text-base-content/60">
-              Edit image descriptions directly in your local files
-            </p>
+        <div className="px-4 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <img src="/favicon.svg" alt="" className="h-12 w-auto" />
+            <div>
+              <h1 className="text-xl font-bold">XMP Description Editor</h1>
+              <p className="text-sm text-base-content/60">
+                Edit image descriptions directly in your local files
+              </p>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <ThemeToggle preference={preference} onChangeTheme={setTheme} />

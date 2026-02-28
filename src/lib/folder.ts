@@ -51,6 +51,16 @@ export async function scanDirectory(
   };
 }
 
+export function collectAllImageHandles(
+  node: FolderNode
+): FileSystemFileHandle[] {
+  const handles = [...node.imageHandles];
+  for (const child of node.children) {
+    handles.push(...collectAllImageHandles(child));
+  }
+  return handles;
+}
+
 export function findFolderById(
   root: FolderNode,
   id: string

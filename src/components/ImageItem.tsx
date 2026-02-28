@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import type { ImageFile } from "@/types";
 
 interface ImageItemProps {
@@ -8,6 +8,8 @@ interface ImageItemProps {
 }
 
 export function ImageItem({ image, onSave, onRemove }: ImageItemProps) {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [thumbSize, setThumbSize] = useState(0);
   const [localValue, setLocalValue] = useState(image.description);
   const [lastSaved, setLastSaved] = useState(image.description);
 
@@ -24,6 +26,16 @@ export function ImageItem({ image, onSave, onRemove }: ImageItemProps) {
     }
   }, [image.id, localValue, isDirty, onSave]);
 
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => {
+      setThumbSize(Math.round(entry.contentRect.height));
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
   const formatLabel =
     image.format === "jpeg"
       ? "JPEG"
@@ -38,9 +50,10 @@ export function ImageItem({ image, onSave, onRemove }: ImageItemProps) {
           <img
             src={image.thumbnailUrl}
             alt={image.name}
-            className="w-20 h-20 object-cover rounded-md flex-shrink-0"
+            className="object-cover rounded-md flex-shrink-0"
+            style={{ width: thumbSize, height: thumbSize }}
           />
-          <div className="flex-1 min-w-0 space-y-2">
+          <div ref={contentRef} className="flex-1 min-w-0 space-y-2">
             <div className="flex items-center gap-2 justify-between">
               <div className="flex items-center gap-2 min-w-0">
                 <span className="text-sm font-medium truncate">

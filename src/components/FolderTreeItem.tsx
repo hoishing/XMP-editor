@@ -54,7 +54,7 @@ export function FolderTreeItem({
         ) : (
           <span className="w-[18px] flex-shrink-0" />
         )}
-        {isSelected ? (
+        {isSelected || expanded ? (
           <FolderOpen className="h-4 w-4 flex-shrink-0 text-base-content/60" />
         ) : (
           <Folder className="h-4 w-4 flex-shrink-0 text-base-content/60" />
