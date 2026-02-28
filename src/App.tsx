@@ -1,25 +1,15 @@
 import { useState, useCallback } from "react";
 import { FileSelector } from "@/components/FileSelector";
 import { ImageList } from "@/components/ImageList";
+import { FolderTree } from "@/components/FolderTree";
+import { ThemeToggle } from "@/components/ThemeToggle";
+import { useTheme } from "@/hooks/useTheme";
+import { scanDirectory, findFolderById } from "@/lib/folder";
 import * as jpegModule from "@/lib/jpeg";
 import * as pngModule from "@/lib/png";
 import * as webpModule from "@/lib/webp";
 import { extractDescription, buildXmpXml } from "@/lib/xmp";
-
-export type ImageFormat = "jpeg" | "png" | "webp";
-
-export interface ImageFile {
-  id: string;
-  handle: FileSystemFileHandle;
-  name: string;
-  format: ImageFormat;
-  description: string;
-  thumbnailUrl: string;
-  existingXmpXml: string | null;
-  saving: boolean;
-  saved: boolean;
-  error: string | null;
-}
+import type { ImageFormat, ImageFile, FolderNode, SourceMode } from "@/types";
 
 function detectFormat(name: string): ImageFormat | null {
   const lower = name.toLowerCase();
@@ -40,25 +30,73 @@ function getFormatModule(format: ImageFormat) {
   }
 }
 
+async function loadImagesFromHandles(
+  handles: FileSystemFileHandle[]
+): Promise<ImageFile[]> {
+  const images: ImageFile[] = [];
+  for (const handle of handles) {
+    const file = await handle.getFile();
+    const format = detectFormat(file.name);
+    if (!format) continue;
+
+    const buffer = await file.arrayBuffer();
+    const mod = getFormatModule(format);
+    const xmpXml = mod.readXmp(buffer);
+    const description = xmpXml ? extractDescription(xmpXml) : "";
+    const thumbnailUrl = URL.createObjectURL(file);
+
+    images.push({
+      id: crypto.randomUUID(),
+      handle,
+      name: file.name,
+      format,
+      description,
+      thumbnailUrl,
+      existingXmpXml: xmpXml,
+      saving: false,
+      saved: false,
+      error: null,
+    });
+  }
+  return images;
+}
+
+function revokeImageUrls(images: ImageFile[]) {
+  for (const img of images) {
+    URL.revokeObjectURL(img.thumbnailUrl);
+  }
+}
+
 function App() {
-  const [images, setImages] = useState<ImageFile[]>([]);
+  const { preference, setTheme } = useTheme();
+  const [source, setSource] = useState<SourceMode>({ kind: "none" });
   const [loading, setLoading] = useState(false);
+  const [folderImagesLoading, setFolderImagesLoading] = useState(false);
 
   const isSupported = "showOpenFilePicker" in window;
+
+  const updateImages = useCallback(
+    (updater: (images: ImageFile[]) => ImageFile[]) => {
+      setSource((prev) => {
+        if (prev.kind === "files")
+          return { ...prev, images: updater(prev.images) };
+        if (prev.kind === "folder")
+          return { ...prev, images: updater(prev.images) };
+        return prev;
+      });
+    },
+    []
+  );
 
   const handleOpenFiles = useCallback(async () => {
     if (!isSupported) return;
 
     try {
       const handles: FileSystemFileHandle[] = await (
-        window as never as {
-          showOpenFilePicker(opts: {
-            multiple: boolean;
-            types: {
-              description: string;
-              accept: Record<string, string[]>;
-            }[];
-          }): Promise<FileSystemFileHandle[]>;
+        window as unknown as {
+          showOpenFilePicker(opts: OpenFilePickerOptions): Promise<
+            FileSystemFileHandle[]
+          >;
         }
       ).showOpenFilePicker({
         multiple: true,
@@ -75,37 +113,18 @@ function App() {
       });
 
       setLoading(true);
+      const newImages = await loadImagesFromHandles(handles);
 
-      const newImages: ImageFile[] = [];
-
-      for (const handle of handles) {
-        const file = await handle.getFile();
-        const format = detectFormat(file.name);
-        if (!format) continue;
-
-        const buffer = await file.arrayBuffer();
-        const mod = getFormatModule(format);
-        const xmpXml = mod.readXmp(buffer);
-        const description = xmpXml ? extractDescription(xmpXml) : "";
-        const thumbnailUrl = URL.createObjectURL(file);
-
-        newImages.push({
-          id: crypto.randomUUID(),
-          handle,
-          name: file.name,
-          format,
-          description,
-          thumbnailUrl,
-          existingXmpXml: xmpXml,
-          saving: false,
-          saved: false,
-          error: null,
-        });
-      }
-
-      setImages((prev) => [...prev, ...newImages]);
+      setSource((prev) => {
+        if (prev.kind === "files") {
+          return { kind: "files", images: [...prev.images, ...newImages] };
+        }
+        if (prev.kind === "folder") {
+          revokeImageUrls(prev.images);
+        }
+        return { kind: "files", images: newImages };
+      });
     } catch (err) {
-      // User cancelled the picker
       if (err instanceof DOMException && err.name === "AbortError") return;
       console.error("Error opening files:", err);
     } finally {
@@ -113,43 +132,111 @@ function App() {
     }
   }, [isSupported]);
 
+  const handleOpenFolder = useCallback(async () => {
+    if (!isSupported) return;
+
+    try {
+      const dirHandle = await (
+        window as unknown as {
+          showDirectoryPicker(opts: {
+            mode: string;
+          }): Promise<FileSystemDirectoryHandle>;
+        }
+      ).showDirectoryPicker({ mode: "readwrite" });
+
+      setLoading(true);
+
+      setSource((prev) => {
+        if (prev.kind === "files" || prev.kind === "folder") {
+          revokeImageUrls(prev.images);
+        }
+        return { kind: "none" };
+      });
+
+      const root = await scanDirectory(dirHandle);
+
+      setSource({
+        kind: "folder",
+        root,
+        selectedFolderId: null,
+        images: [],
+      });
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      console.error("Error opening folder:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, [isSupported]);
+
+  const handleSelectTreeFolder = useCallback(async (folderId: string) => {
+    let folderNode: FolderNode | null = null;
+
+    setSource((prev) => {
+      if (prev.kind !== "folder") return prev;
+      revokeImageUrls(prev.images);
+      folderNode = findFolderById(prev.root, folderId);
+      return { ...prev, selectedFolderId: folderId, images: [] };
+    });
+
+    if (!folderNode) return;
+
+    setFolderImagesLoading(true);
+
+    try {
+      const newImages = await loadImagesFromHandles(
+        (folderNode as FolderNode).imageHandles
+      );
+
+      setSource((prev) => {
+        if (prev.kind !== "folder" || prev.selectedFolderId !== folderId)
+          return prev;
+        return { ...prev, images: newImages };
+      });
+    } catch (err) {
+      console.error("Error loading folder images:", err);
+    } finally {
+      setFolderImagesLoading(false);
+    }
+  }, []);
+
   const handleSave = useCallback(
     async (id: string, newDescription: string) => {
-      setImages((prev) =>
-        prev.map((img) =>
-          img.id === id ? { ...img, saving: true, error: null, saved: false } : img
+      updateImages((imgs) =>
+        imgs.map((img) =>
+          img.id === id
+            ? { ...img, saving: true, error: null, saved: false }
+            : img
         )
       );
 
       try {
-        // Find the image entry
         let imageFile: ImageFile | undefined;
-        setImages((prev) => {
-          imageFile = prev.find((img) => img.id === id);
+        setSource((prev) => {
+          const images =
+            prev.kind === "files" || prev.kind === "folder"
+              ? prev.images
+              : [];
+          imageFile = images.find((img) => img.id === id);
           return prev;
         });
 
         if (!imageFile) throw new Error("Image not found");
 
-        // Read fresh buffer from disk
         const file = await imageFile.handle.getFile();
         const buffer = await file.arrayBuffer();
 
-        // Build new XMP and write
         const mod = getFormatModule(imageFile.format);
         const currentXml = mod.readXmp(buffer);
         const newXml = buildXmpXml(currentXml, newDescription);
         const newBuffer = mod.writeXmp(buffer, newXml);
 
-        // Write back to disk
-        const writable = await (imageFile.handle as FileSystemFileHandle & {
-          createWritable(): Promise<FileSystemWritableFileStream>;
-        }).createWritable();
+        const writable = await imageFile.handle.createWritable();
         await writable.write(newBuffer);
         await writable.close();
 
-        setImages((prev) =>
-          prev.map((img) =>
+        updateImages((imgs) =>
+          imgs.map((img) =>
             img.id === id
               ? {
                   ...img,
@@ -163,10 +250,9 @@ function App() {
           )
         );
 
-        // Clear "saved" indicator after 2 seconds
         setTimeout(() => {
-          setImages((prev) =>
-            prev.map((img) =>
+          updateImages((imgs) =>
+            imgs.map((img) =>
               img.id === id ? { ...img, saved: false } : img
             )
           );
@@ -174,34 +260,35 @@ function App() {
       } catch (err) {
         const message =
           err instanceof Error ? err.message : "Unknown error saving file";
-        setImages((prev) =>
-          prev.map((img) =>
+        updateImages((imgs) =>
+          imgs.map((img) =>
             img.id === id ? { ...img, saving: false, error: message } : img
           )
         );
       }
     },
-    []
+    [updateImages]
   );
 
-  const handleRemove = useCallback((id: string) => {
-    setImages((prev) => {
-      const img = prev.find((i) => i.id === id);
-      if (img) URL.revokeObjectURL(img.thumbnailUrl);
-      return prev.filter((i) => i.id !== id);
-    });
-  }, []);
+  const handleRemove = useCallback(
+    (id: string) => {
+      updateImages((imgs) => {
+        const img = imgs.find((i) => i.id === id);
+        if (img) URL.revokeObjectURL(img.thumbnailUrl);
+        return imgs.filter((i) => i.id !== id);
+      });
+    },
+    [updateImages]
+  );
 
   if (!isSupported) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+      <div className="min-h-screen bg-base-100 flex items-center justify-center p-4">
         <div className="max-w-md text-center space-y-4">
-          <h1 className="text-2xl font-bold text-foreground">
-            Browser Not Supported
-          </h1>
-          <p className="text-muted-foreground">
-            This app requires the File System Access API, which is only available
-            in Chrome, Edge, and other Chromium-based browsers.
+          <h1 className="text-2xl font-bold">Browser Not Supported</h1>
+          <p className="text-base-content/60">
+            This app requires the File System Access API, which is only
+            available in Chrome, Edge, and other Chromium-based browsers.
           </p>
         </div>
       </div>
@@ -209,45 +296,80 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b">
+    <div className="min-h-screen bg-base-100">
+      <header className="border-b border-base-300">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-bold text-foreground">
-              XMP Description Editor
-            </h1>
-            <p className="text-sm text-muted-foreground">
+            <h1 className="text-xl font-bold">XMP Description Editor</h1>
+            <p className="text-sm text-base-content/60">
               Edit image descriptions directly in your local files
             </p>
           </div>
-          <FileSelector onSelect={handleOpenFiles} loading={loading} />
+          <div className="flex items-center gap-2">
+            <ThemeToggle preference={preference} onChangeTheme={setTheme} />
+            <FileSelector
+              onSelectFiles={handleOpenFiles}
+              onSelectFolder={handleOpenFolder}
+              loading={loading}
+            />
+          </div>
         </div>
       </header>
 
-      <main className="container mx-auto px-4 py-6">
-        {images.length === 0 ? (
+      {source.kind === "none" ? (
+        <main className="container mx-auto px-4 py-6">
           <div className="flex flex-col items-center justify-center py-24 text-center space-y-4">
-            <div className="text-muted-foreground space-y-2">
+            <div className="text-base-content/60 space-y-2">
               <p className="text-lg">No images loaded</p>
               <p className="text-sm">
-                Click "Select Images" to open JPEG, PNG, or WebP files from your
-                computer.
+                Select individual image files, or choose a folder to browse.
               </p>
               <p className="text-sm">
                 Changes are saved directly to the files when you leave the
                 description field.
               </p>
             </div>
-            <FileSelector onSelect={handleOpenFiles} loading={loading} />
+            <FileSelector
+              onSelectFiles={handleOpenFiles}
+              onSelectFolder={handleOpenFolder}
+              loading={loading}
+            />
           </div>
-        ) : (
+        </main>
+      ) : source.kind === "files" ? (
+        <main className="container mx-auto px-4 py-6">
           <ImageList
-            images={images}
+            images={source.images}
             onSave={handleSave}
             onRemove={handleRemove}
           />
-        )}
-      </main>
+        </main>
+      ) : (
+        <div className="flex">
+          <FolderTree
+            root={source.root}
+            selectedFolderId={source.selectedFolderId}
+            onSelectFolder={handleSelectTreeFolder}
+          />
+          <main className="flex-1 px-4 py-6 min-w-0">
+            {source.selectedFolderId === null ? (
+              <div className="flex items-center justify-center py-24">
+                <p className="text-base-content/60">
+                  Select a folder from the sidebar to view its images
+                </p>
+              </div>
+            ) : (
+              <ImageList
+                images={source.images}
+                onSave={handleSave}
+                onRemove={handleRemove}
+                loading={folderImagesLoading}
+                emptyMessage="No images in this folder"
+              />
+            )}
+          </main>
+        </div>
+      )}
     </div>
   );
 }

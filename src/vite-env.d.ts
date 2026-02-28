@@ -8,8 +8,35 @@ interface FileSystemFileHandle {
   readonly name: string;
 }
 
+interface FileSystemDirectoryHandle {
+  readonly kind: "directory";
+  readonly name: string;
+  values(): AsyncIterableIterator<
+    FileSystemFileHandle | FileSystemDirectoryHandle
+  >;
+  getFileHandle(
+    name: string,
+    options?: { create?: boolean }
+  ): Promise<FileSystemFileHandle>;
+  getDirectoryHandle(
+    name: string,
+    options?: { create?: boolean }
+  ): Promise<FileSystemDirectoryHandle>;
+}
+
 interface FileSystemWritableFileStream extends WritableStream {
-  write(data: ArrayBuffer | Blob | string | { type: string; data: ArrayBuffer | Blob | string; position?: number; size?: number }): Promise<void>;
+  write(
+    data:
+      | ArrayBuffer
+      | Blob
+      | string
+      | {
+          type: string;
+          data: ArrayBuffer | Blob | string;
+          position?: number;
+          size?: number;
+        }
+  ): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -23,5 +50,10 @@ interface OpenFilePickerOptions {
 }
 
 interface Window {
-  showOpenFilePicker(options?: OpenFilePickerOptions): Promise<FileSystemFileHandle[]>;
+  showOpenFilePicker(
+    options?: OpenFilePickerOptions
+  ): Promise<FileSystemFileHandle[]>;
+  showDirectoryPicker(options?: {
+    mode?: "read" | "readwrite";
+  }): Promise<FileSystemDirectoryHandle>;
 }

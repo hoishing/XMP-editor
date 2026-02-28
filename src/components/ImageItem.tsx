@@ -1,8 +1,5 @@
-import { useState, useCallback, useRef, useEffect } from "react";
-import { Card } from "@/components/ui/card";
-import { Textarea } from "@/components/ui/textarea";
-import { Button } from "@/components/ui/button";
-import type { ImageFile } from "@/App";
+import { useState, useCallback } from "react";
+import type { ImageFile } from "@/types";
 
 interface ImageItemProps {
   image: ImageFile;
@@ -12,21 +9,20 @@ interface ImageItemProps {
 
 export function ImageItem({ image, onSave, onRemove }: ImageItemProps) {
   const [localValue, setLocalValue] = useState(image.description);
-  const lastSavedRef = useRef(image.description);
+  const [lastSaved, setLastSaved] = useState(image.description);
 
-  // Sync when the parent updates (e.g., after save)
-  useEffect(() => {
-    lastSavedRef.current = image.description;
-  }, [image.description]);
+  if (image.description !== lastSaved) {
+    setLastSaved(image.description);
+  }
 
-  const isDirty = localValue !== lastSavedRef.current;
+  const isDirty = localValue !== lastSaved;
 
   const handleBlur = useCallback(() => {
-    if (localValue !== lastSavedRef.current) {
+    if (isDirty) {
       onSave(image.id, localValue);
-      lastSavedRef.current = localValue;
+      setLastSaved(localValue);
     }
-  }, [image.id, localValue, onSave]);
+  }, [image.id, localValue, isDirty, onSave]);
 
   const formatLabel =
     image.format === "jpeg"
@@ -36,61 +32,65 @@ export function ImageItem({ image, onSave, onRemove }: ImageItemProps) {
         : "WebP";
 
   return (
-    <Card className="p-4">
-      <div className="flex gap-4">
-        <img
-          src={image.thumbnailUrl}
-          alt={image.name}
-          className="w-20 h-20 object-cover rounded-md flex-shrink-0"
-        />
-        <div className="flex-1 min-w-0 space-y-2">
-          <div className="flex items-center gap-2 justify-between">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="text-sm font-medium truncate">{image.name}</span>
-              <span className="text-xs px-1.5 py-0.5 rounded bg-secondary text-secondary-foreground flex-shrink-0">
-                {formatLabel}
-              </span>
-            </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              {image.saving && (
-                <span className="text-xs text-muted-foreground">Saving...</span>
-              )}
-              {image.saved && (
-                <span className="text-xs text-green-600">Saved</span>
-              )}
-              {image.error && (
-                <span className="text-xs text-destructive" title={image.error}>
-                  Error
-                </span>
-              )}
-              {isDirty && !image.saving && (
-                <span className="text-xs text-amber-500">Unsaved</span>
-              )}
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
-                onClick={() => onRemove(image.id)}
-                title="Remove from list"
-              >
-                ×
-              </Button>
-            </div>
-          </div>
-          <Textarea
-            value={localValue}
-            onChange={(e) => setLocalValue(e.target.value)}
-            onBlur={handleBlur}
-            placeholder="Enter image description..."
-            disabled={image.saving}
-            className={isDirty ? "border-amber-400" : ""}
-            rows={2}
+    <div className="card bg-base-100 shadow-sm border border-base-300">
+      <div className="card-body p-4">
+        <div className="flex gap-4">
+          <img
+            src={image.thumbnailUrl}
+            alt={image.name}
+            className="w-20 h-20 object-cover rounded-md flex-shrink-0"
           />
-          {image.error && (
-            <p className="text-xs text-destructive">{image.error}</p>
-          )}
+          <div className="flex-1 min-w-0 space-y-2">
+            <div className="flex items-center gap-2 justify-between">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-sm font-medium truncate">
+                  {image.name}
+                </span>
+                <span className="badge badge-sm badge-soft flex-shrink-0">
+                  {formatLabel}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {image.saving && (
+                  <span className="text-xs text-base-content/60">
+                    Saving...
+                  </span>
+                )}
+                {image.saved && (
+                  <span className="text-xs text-success">Saved</span>
+                )}
+                {image.error && (
+                  <span className="text-xs text-error" title={image.error}>
+                    Error
+                  </span>
+                )}
+                {isDirty && !image.saving && (
+                  <span className="text-xs text-warning">Unsaved</span>
+                )}
+                <button
+                  className="btn btn-ghost btn-xs btn-square text-base-content/60 hover:text-error"
+                  onClick={() => onRemove(image.id)}
+                  title="Remove from list"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            <textarea
+              className={`textarea textarea-bordered w-full ${isDirty ? "textarea-warning" : ""}`}
+              value={localValue}
+              onChange={(e) => setLocalValue(e.target.value)}
+              onBlur={handleBlur}
+              placeholder="Enter image description..."
+              disabled={image.saving}
+              rows={2}
+            />
+            {image.error && (
+              <p className="text-xs text-error">{image.error}</p>
+            )}
+          </div>
         </div>
       </div>
-    </Card>
+    </div>
   );
 }
