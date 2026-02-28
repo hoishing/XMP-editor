@@ -303,7 +303,6 @@ function App() {
       <header className="border-b border-base-300">
         <div className="px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <img src="/favicon.svg" alt="" className="h-12 w-auto" />
             <div>
               <h1 className="text-xl font-bold">XMP Description Editor</h1>
               <p className="text-sm text-base-content/60">

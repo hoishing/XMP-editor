@@ -50,7 +50,7 @@ export function ImageItem({ image, onSave, onRemove }: ImageItemProps) {
           <img
             src={image.thumbnailUrl}
             alt={image.name}
-            className="object-cover rounded-md flex-shrink-0"
+            className="object-contain rounded-md flex-shrink-0"
             style={{ width: thumbSize, height: thumbSize }}
           />
           <div ref={contentRef} className="flex-1 min-w-0 space-y-2">
